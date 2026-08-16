@@ -67,6 +67,16 @@ def _index(
     index(config_file, documents_path, collection_name)
 
 
+def _graph_index(
+    config_file: str,
+    collection_name: Optional[str] = None,
+    **_,
+):
+    from mmore.run_graph_index import graph_index
+
+    graph_index(config_file, collection_name)
+
+
 def _rag(config_file: str, privacy_config_file: Optional[str] = None, **_):
     from mmore.run_rag import rag
 
@@ -118,6 +128,12 @@ def _dc_index():
     from mmore.run_index import IndexConfig
 
     return IndexConfig
+
+
+def _dc_graph_index():
+    from mmore.run_graph_index import GraphIndexConfig
+
+    return GraphIndexConfig
 
 
 def _dc_rag():
@@ -184,6 +200,19 @@ REGISTRY: dict[str, CommandSpec] = {
         config_dataclass=_dc_index,
         required_extras=["index", "cpu"],
         canary_imports=["pymilvus", "sentence_transformers", "torch"],
+    ),
+    "graph-index": CommandSpec(
+        name="graph-index",
+        description="Build the LinearRAG entity graph over an indexed collection",
+        example_config="examples/graph_index/config.yaml",
+        run=_graph_index,
+        config_globs=[
+            "examples/graph_index/**/*.yaml",
+            "examples/graph_index/**/*.yml",
+        ],
+        config_dataclass=_dc_graph_index,
+        required_extras=["graph", "cpu"],
+        canary_imports=["igraph", "spacy", "pymilvus"],
     ),
     "rag": CommandSpec(
         name="rag",

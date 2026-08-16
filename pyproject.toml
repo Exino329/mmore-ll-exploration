@@ -130,6 +130,15 @@ rag = [
     "nltk>=3.9",
 ]
 
+graph = [
+    # Graph retrieval (LinearRAG Tri-Graph). scipy already comes with `index`.
+    # The spaCy model is a separate download: python -m spacy download en_core_web_sm
+    "mmore[index]",
+    "python-igraph>=0.11",
+    "spacy>=3.8",
+    "pyarrow",
+]
+
 api = [
     # API servers
     "fastapi[standard]>=0.110",
@@ -170,7 +179,7 @@ tui = [
 ]
 
 all = [
-    "mmore[process,rag,api,websearch,tui,privacy]",
+    "mmore[process,rag,graph,api,websearch,tui,privacy]",
 ]
 
 cpu = [
