@@ -19,6 +19,7 @@ from langchain_core.runnables import (
 )
 
 from ..utils import load_config
+from .factory import load_retriever
 from .judge import JUDGE_OUTPUT_KEYS, JudgeConfig, LLMJudge, retrieve_with_judge
 from .judge.llm import judge_llm_from_config
 from .llm import LLM, LLMConfig
@@ -98,7 +99,7 @@ class RAGPipeline:
         if isinstance(config, str):
             config = load_config(config, RAGConfig)
 
-        retriever = Retriever.from_config(config.retriever)
+        retriever = load_retriever(config.retriever)
         llm = None if privacy_graph is not None else LLM.from_config(config.llm)
         judge = (
             LLMJudge(llm=judge_llm_from_config(config.judge.llm), config=config.judge)

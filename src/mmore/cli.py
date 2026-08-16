@@ -100,6 +100,39 @@ def index(config_file: str, documents_path: str, collection_name: str):
     run_index(config_file, documents_path, collection_name)
 
 
+@main.command("graph-index")
+@click.option(
+    "--config-file",
+    "-c",
+    type=str,
+    required=True,
+    help="Path to the config file for the graph index.",
+)
+@click.option(
+    "--collection-name",
+    "-n",
+    type=str,
+    required=False,
+    help="Name of the already-indexed collection to build the graph for.",
+)
+def graph_index(config_file: str, collection_name: str):
+    """Build the LinearRAG entity graph over an already-indexed collection.
+
+    The chunks are read back from the Milvus collection, so `mmore index` must have run
+    first. There is no --documents-path: chunk ids only exist in the collection.
+
+    Args:
+      config_file: path to the config file for the graph index.
+      collection_name: name of the collection the graph is built for.
+
+    Returns:
+
+    """
+    from .run_graph_index import graph_index as run_graph_index
+
+    run_graph_index(config_file, collection_name)
+
+
 @main.command()
 @click.option(
     "--config-file",

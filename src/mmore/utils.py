@@ -170,9 +170,9 @@ def get_retriever_from_config(config: "RetrieverConfig") -> "Retriever":
     Returns the corresponding Retriever object.
     """
 
-    from .rag.retriever import Retriever
+    from .rag.factory import load_retriever
 
-    return Retriever.from_config(config)
+    return load_retriever(config)
 
 
 def get_retriever(uri: str, db_name: str) -> "Retriever":

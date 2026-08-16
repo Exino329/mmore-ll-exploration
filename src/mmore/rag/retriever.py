@@ -40,6 +40,13 @@ class RetrieverConfig:
     jobs_per_gpu: int = 1
     # None below gives by default a queue size of num_gpu * jobs_per_gpu * 10
     max_queue_size: Optional[int] = None
+    # Retrieval strategy: "hybrid" (dense + sparse over Milvus) or "graph" (LinearRAG
+    # Tri-Graph search). Defaults to "hybrid" so existing configs keep working.
+    type: str = "hybrid"
+    # Strategy-specific settings, re-parsed by the matching retriever. Kept untyped
+    # because dacite has no discriminated-union support; same shape as the postprocessor
+    # `type` + `args` configs.
+    graph: Dict[str, Any] = field(default_factory=dict)
 
 
 class Retriever(BaseRetriever):
@@ -80,6 +87,15 @@ class Retriever(BaseRetriever):
 
     @classmethod
     def from_config(cls, config: str | RetrieverConfig):
+        return cls(**cls._base_kwargs_from_config(config))
+
+    @classmethod
+    def _base_kwargs_from_config(cls, config: str | RetrieverConfig) -> Dict[str, Any]:
+        """Build the constructor kwargs shared by every Milvus-backed retriever.
+
+        Split out of ``from_config`` so subclasses (see ``rag.graph.retriever``) can reuse
+        the client/model/reranker setup and add their own fields.
+        """
         if isinstance(config, str):
             config = load_config(config, RetrieverConfig)
 
@@ -128,16 +144,16 @@ class Retriever(BaseRetriever):
         else:
             reranker_model = reranker_tokenizer = None
 
-        return cls(
-            dense_model=dense_model,
-            sparse_model=sparse_model,
-            client=client,
-            hybrid_search_weight=config.hybrid_search_weight,
-            k=config.k,
-            use_web=config.use_web,
-            reranker_model=reranker_model,
-            reranker_tokenizer=reranker_tokenizer,
-        )
+        return {
+            "dense_model": dense_model,
+            "sparse_model": sparse_model,
+            "client": client,
+            "hybrid_search_weight": config.hybrid_search_weight,
+            "k": config.k,
+            "use_web": config.use_web,
+            "reranker_model": reranker_model,
+            "reranker_tokenizer": reranker_tokenizer,
+        }
 
     def compute_query_embeddings(
         self, query: str

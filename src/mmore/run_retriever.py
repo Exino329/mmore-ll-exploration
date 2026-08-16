@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from tqdm import tqdm
 
 from mmore.profiler import enable_profiling_from_env, profile_function
+from mmore.rag.factory import load_retriever
 from mmore.rag.retriever import Retriever, RetrieverConfig
 from mmore.utils import load_config
 from mmore.ux import quiet_noisy_libs, setup_logging, step_intro
@@ -64,7 +65,7 @@ def retrieve(
     config = load_config(config_file, RetrieverConfig)
 
     logger.info("Running retriever...")
-    retriever = Retriever.from_config(config)
+    retriever = load_retriever(config)
     logger.info("Retriever loaded!")
 
     # Read queries from the JSONL file
@@ -142,7 +143,7 @@ def make_router(config_file: str) -> APIRouter:
     config = load_config(config_file, RetrieverConfig)
 
     logger.debug("Running retriever...")
-    retriever_obj = Retriever.from_config(config)
+    retriever_obj = load_retriever(config)
     logger.debug("Retriever loaded!")
 
     @router.get(
