@@ -83,8 +83,8 @@ changes graph to do so: propagation ran on the sentence-entity graph `M`, rankin
 the passage-entity graph `C`, a bipartite graph whose nodes are the passages `V_p` and the
 entities `V_e`, with an edge wherever a passage contains an entity.
 
-Every node of that graph is given a starting importance `I`. Entity nodes take `a_q`
-directly, so an entity weighs what the propagation gave it. Passage nodes are set by:
+Every node of that graph is given a score.  Entity nodes take `a_q` directly, so an entity weighs what the propagation gave it.
+Passage nodes are set by:
 
 ```
 I(v) = ( λ · sim(q, v) + ln( 1 + Σ_{eᵢ ∈ E_a} a_q⁽ⁱ⁾ · ln(1 + N_eᵢ) / L_eᵢ ) ) · W_p
@@ -95,6 +95,13 @@ the activated entities `E_a` the passage contains, their activation score `a_q�
 by how often the entity occurs in the passage (`N_eᵢ`). A passage
 concentrating a few strongly activated entities therefore starts higher than one mentioning
 many weak ones. `λ` and `W_p` are constants.
+
+These scores form the *teleport
+distribution* of the random walk when running pageRank algorithm. at each step the walker follows an edge with probability
+`d`, and with probability `1 - d` it lands back on a node drawn from that distribution. A node scoring zero there is never a landing
+point and can only receive importance through edges. This is what makes the ranking specific
+to the query.
+
 
 A personalized PageRank is then run over the bipartite graph with those values, and the
 passages are ranked by their converged score. The top-k among `V_p` are the retrieved
