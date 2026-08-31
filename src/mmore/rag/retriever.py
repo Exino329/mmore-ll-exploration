@@ -63,7 +63,14 @@ class Retriever(BaseRetriever):
 
     _search_types = Literal["dense", "sparse", "hybrid"]
 
-    _search_weights = {"dense": 0, "sparse": 1}
+    # Weight given to the *dense* request: `retrieve` ranks `reqs=[dense, sparse]` with
+    # `WeightedRanker(search_weight, 1 - search_weight)`, and the ranker applies its first
+    # weight to the first request. These were the other way round, so `search_type="dense"`
+    # put weight 0 on the dense field and searched SPLADE alone, and vice versa. Verified
+    # against `client.search` on each `anns_field` on its own: the top-10 of the old
+    # `"dense"` matched the sparse field's ranking exactly, and never the dense field's.
+    # `"hybrid"` is unaffected — at the default 0.5 the two weights are symmetric.
+    _search_weights = {"dense": 1, "sparse": 0}
 
     _retrieve_seconds: float = 0.0
     _rerank_seconds: float = 0.0
@@ -384,6 +391,11 @@ class Retriever(BaseRetriever):
         partition_names: Optional[List[str]] = kwargs.get("partition_names", None)
         min_score: float = kwargs.get("min_score", -1.0)
         k: int = kwargs.get("k", self.k)
+        # `retrieve` has always taken a search_type; the LangChain entry point did not pass
+        # it on, so dense-only and sparse-only searches were unreachable through `.invoke`.
+        search_type: str = (
+            query.get("search_type") if isinstance(query, dict) else None
+        ) or kwargs.get("search_type", "hybrid")
 
         if k == 0:
             return []
@@ -397,6 +409,7 @@ class Retriever(BaseRetriever):
             min_score=min_score,
             k=k,
             document_ids=document_ids,
+            search_type=search_type,
         )
         retrieve_elapsed = time.perf_counter() - time_start
 

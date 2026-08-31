@@ -37,6 +37,25 @@ class ActivatedEntity:
     contribution to the passage bonus, so far-away entities count for less."""
 
 
+def _merge(incumbent: ActivatedEntity, candidate: ActivatedEntity) -> ActivatedEntity:
+    """Keep the strongest evidence for an entity reached more than once.
+
+    An entity is routinely re-reached at a later hop with a weaker score. Upstream lets the
+    later, weaker reading win, which demotes the very entities the question is about: a seed
+    re-reached at hop 2 drops from its linking similarity to the propagated value *and* has
+    its tier raised, so ``score_passages`` divides its contribution twice over. Measured on
+    40 MedHop questions, 91% of seeds end up demoted that way.
+
+    Max score and min tier are the monotone reading of the same evidence: reaching an entity
+    again is corroboration, never a reason to trust it less.
+    """
+    return ActivatedEntity(
+        index=incumbent.index,
+        score=max(incumbent.score, candidate.score),
+        tier=min(incumbent.tier, candidate.tier),
+    )
+
+
 def min_max_normalize(values: np.ndarray) -> np.ndarray:
     if values.size == 0:
         return values
@@ -140,11 +159,29 @@ def activate_entities(
                 for neighbour in neighbours:
                     neighbour = int(neighbour)
                     entity_weights[neighbour] += propagated
-                    next_frontier[neighbour] = ActivatedEntity(
+                    reached = ActivatedEntity(
                         index=neighbour, score=propagated, tier=iteration + 1
                     )
+                    incumbent = next_frontier.get(neighbour)
+                    next_frontier[neighbour] = (
+                        reached
+                        if incumbent is None or config.activation_merge == "overwrite"
+                        else _merge(incumbent, reached)
+                    )
 
-        activated.update(next_frontier)
+        if config.activation_merge == "overwrite":
+            activated.update(next_frontier)
+        else:
+            for index, entity in next_frontier.items():
+                incumbent = activated.get(index)
+                activated[index] = (
+                    entity if incumbent is None else _merge(incumbent, entity)
+                )
+
+        # The frontier keeps this hop's freshly propagated scores even under `best`: the
+        # merge fixes the bookkeeping `score_passages` reads, not how far the walk travels.
+        # Expanding a re-reached seed at its original score would restart the cascade from
+        # it at every hop.
         frontier = next_frontier
         iteration += 1
 

@@ -18,6 +18,10 @@ DEFAULT_EXCLUDED_LABELS = ["ORDINAL", "CARDINAL"]
 
 NER_BACKENDS = ("spacy", "medspacy")
 
+# How a re-reached entity is recorded during semantic bridging. See
+# ``GraphRetrieverConfig.activation_merge``.
+ACTIVATION_MERGES = ("overwrite", "best")
+
 # medspaCy components added on top of the spaCy pipeline. ConText is the reason to reach
 # for medspaCy at all; PyRuSH replaces the parser's sentence segmentation.
 DEFAULT_MEDSPACY_COMPONENTS = ["medspacy_pyrush", "medspacy_context"]
@@ -180,6 +184,19 @@ class GraphRetrieverConfig:
     iteration_threshold: float = 0.4
     """Entities scoring below this are not expanded and do not join the frontier."""
 
+    activation_merge: str = "overwrite"
+    """How an entity reached more than once during bridging is recorded.
+
+    ``overwrite`` is the reference implementation: the last hop to reach an entity replaces
+    what was known about it, so a seed re-reached at hop 2 keeps the weaker propagated score
+    and the higher tier. ``score_passages`` then divides its contribution by that tier,
+    penalising twice over the entity the question is actually about — on 40 MedHop questions,
+    91% of seeds end up demoted this way.
+
+    ``best`` keeps the maximum score and the minimum tier instead. It changes bookkeeping
+    only: the frontier still expands on the freshly propagated scores, so the walk reaches
+    exactly the same entities. Not in the reference implementation."""
+
     passage_ratio: float = 0.05
     """Weight of the dense-retrieval term in the passage prior."""
 
@@ -215,5 +232,10 @@ class GraphRetrieverConfig:
             raise ValueError("max_iterations must be >= 1")
         if self.top_k_sentence < 1:
             raise ValueError("top_k_sentence must be >= 1")
+        if self.activation_merge not in ACTIVATION_MERGES:
+            raise ValueError(
+                f"Unknown activation_merge: {self.activation_merge}. "
+                f"Expected one of {list(ACTIVATION_MERGES)}."
+            )
         if not 0.0 < self.damping < 1.0:
             raise ValueError("damping must lie in (0, 1)")
