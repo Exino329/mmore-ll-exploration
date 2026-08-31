@@ -136,3 +136,5 @@ chitchat/
 
 # Exploration fork — not tracked
 exploration/
+# Benchmark run artifacts (corpora, Milvus databases, graph indexes, results)
+benchmarks/.runs/
