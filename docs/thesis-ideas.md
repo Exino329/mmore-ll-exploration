@@ -4,7 +4,7 @@
 
 Working title:
 
-> **Scalable Graph RAG: LLM-free graph construction for efficient retrieval**
+> **Graph RAG: LLM-free graph construction for efficient retrieval**
 
 
 ## Context
@@ -115,60 +115,46 @@ happen to be whole sentences whose meaning was never compressed into a predicate
 
 ## Research questions
 
-### RQ1. Can graph RAG be made scalable without giving up its effectiveness?
+### RQ1. What are the trade-offs of an LLM-free graph construction against an LLM-constructed one?
+
 
 Sub-questions:
 
-- What does graph construction actually cost, decomposed into entity extraction, entity
-  embedding and graph assembly, and how does each part scale with corpus size?
-- What are the trade-offs of the cheap pipeline against the expensive one ? (What can a LLM constructed graph materializes that NER does not ?, no hallucinations due to llm extraction, deterministic,...)
-
-### RQ2. In which scenarios does graph retrieval pay off, and as which component?
-
-Not *is the graph better*, which invites a single aggregate number and a yes/no the
-literature already answers badly. The useful question is **conditional**: under which
-query, corpus and pipeline conditions does the graph signal add something no flat scorer
-provides, and, when it does, whether it is better used *instead of* or *on top of* an
-existing component?
+- What does an LLM-free construction gain: cost, determinism, no extraction hallucination?
+- How does construction cost scale with corpus size, and what would the same corpus cost
+  with an LLM extractor?
+- What can an LLM-built graph materialize that NER cannot?
 
 
-- Where does the graph win, and on which metric: recall@k, hit@1, all-golds@k, answer
-  accuracy? (Standing observation from the current runs: the graph *finds* good passages
-  but *orders* them badly, which points at fusion rather than replacement.)
-- Are graph and lexical signals complementary in a way dense and lexical are not, measured
-  as rank correlation and overlap of retrieved sets, not only as end-metric deltas?
+### RQ2. How does LLM-free graph retrieval compare with lexical and dense retrieval, and how do the three signals combine?
+
+Dense is not a rival system here but a **special case** of the graph scorer: the passage
+prior is `passage_ratio · dense + entity bonus`, so zeroing the bonus and the damping gives
+back the dense ranking. Graph vs dense is therefore a nested ablation, and its delta
+isolates what the structure contributes. The candidate pool gives the matching measurement,
+being the dense top-N *plus* every passage incident to an activated entity: the share of
+returned passages coming from outside that pool is what the graph finds and dense does not.
+
+Sub-questions:
+
+- Where does the graph win over dense and over lexical retrieval, and on which metric?
+- Are the graph and lexical signals complementary in a way dense and lexical are not?
+- Is the graph better used in place of an existing signal, or fused on top of it?
 
 
-### RQ3. Do the answers to RQ1 and RQ2 transfer to the medical domain, and what has to change for them to?
+### RQ3. Which medical retrieval tasks can benefit using a graphRag?
 
-The transfer question, and a corollary of the first two rather than a separate axis. Its
-first half reruns the RQ2 comparison on medical corpora, which is where the graph's
-assumptions should pay off, since medical entities are dense, named and standardized and
-medical questions are relational.
-
-Its second half is what keeps it from being a rerun: the domain does not only swap the
-data, it swaps components of the pipeline. The extractor has to change, a failure mode
-appears that does not exist in the general domain (a passage linked to an entity it
-*denies*), and a lever appears that is not available there either (normalizing entities
-into a medical vocabulary). Without that half the first one is not even measurable, since
-a poor medical result would be indistinguishable from an unsuited extractor.
 
 There are spaCy models capable of processing biomedical/clinical text:
 https://allenai.github.io/scispacy/
 
 Sub-questions:
 
-- Do biomedical entity extractors change the picture qualitatively rather than
-  quantitatively? (Already visible: with a general-domain model the graph finds no seed
-  entity on most medical queries and silently degrades to hybrid.)
-- Does clinical context handling (negation, uncertainty, hypotheticals, family history)
-  change retrieval? Linking a passage to an entity it *denies* is a graph-specific error
-  mode that flat retrieval does not have.
-- Do medical questions with a genuine relational shape (differential diagnosis, drug
-  interaction, symptom→disease) separate graph from hybrid where general-domain questions
-  do not?
-- Does grounding entities in a medical vocabulary (UMLS/ICD-11 style normalization) buy
-  anything over raw extracted strings?
+- Which medical question shapes separate the graph from flat retrieval?
+- How can we interpret graph's retrieval results in a medical context ?
+
+
+
 
 ## Plan 
 
@@ -178,9 +164,11 @@ Sub-questions:
 - Measure retrieval and answer quality in a medical context and identify
 
 
-Note that if time allows, there is a recent improvement of LinearRAG: **EHRAG** (arXiv
-`2604.17458`, https://github.com/yfsong00/EHRAG), which stays LLM-free and linear. It is build on top of LinearRag 
-and adds a fourth node type on top: concept nodes obtained by clustering the entity embeddings, each linked to the entities closest to its centroid.
-They let the activation jump between entities that are related but never co-occur in a
-sentence, which is the blind spot of a purely structural graph. It reports outperforming
-LinearRAG
+Note that if time allows, there is a related LLM-free system worth looking at: **EHRAG**
+(arXiv `2604.17458`, https://arxiv.org/pdf/2604.17458,
+https://github.com/yfsong00/EHRAG). It is a separate implementation inspired by LinearRAG,
+which it uses as a baseline rather than as a foundation, and it stays LLM-free at indexing
+time (spaCy NER) and linear. Its addition is clustering: entity embeddings are grouped with
+BIRCH into concept nodes, each linked to the entities nearest its centroid, which let the
+activation jump between entities that are related but never co-occur in a sentence.
+It reports outperforming LinearRAG.
