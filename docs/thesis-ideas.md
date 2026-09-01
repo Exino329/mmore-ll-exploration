@@ -4,7 +4,7 @@
 
 Working title:
 
-> **Graph RAG: LLM-free graph construction for efficient retrieval**
+> **Graph RAG: LLM-free graph construction for efficient indexing and retrieval**
 
 
 ## Context
