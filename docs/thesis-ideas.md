@@ -126,7 +126,7 @@ Sub-questions:
 - What can an LLM-built graph materialize that NER cannot?
 
 
-### RQ2. How does LLM-free graph retrieval compare with lexical and dense retrieval, and how do the three signals combine?
+### RQ2. How does LLM-free graph retrieval compare with lexical and dense retrieval, and how does it combine with them?
 
 Dense is not a rival system here but a **special case** of the graph scorer: the passage
 prior is `passage_ratio · dense + entity bonus`, so zeroing the bonus and the damping gives
