@@ -112,7 +112,6 @@ Multi-hop reasoning therefore happens over *sentences*, not over relation edges.
 `Beatrice I → s₁ → Barbarossa → s₂ → Germany` is structurally a graph path; its edges just
 happen to be whole sentences whose meaning was never compressed into a predicate.
 
-
 ## Research questions
 
 ### RQ1. What are the trade-offs of an LLM-free graph construction against an LLM-constructed one?
@@ -123,7 +122,10 @@ Sub-questions:
 - What does an LLM-free construction gain: cost, determinism, no extraction hallucination?
 - How does construction cost scale with corpus size, and what would the same corpus cost
   with an LLM extractor?
-- What can an LLM-built graph materialize that NER cannot?
+- What can an LLM-built graph materialize that NER cannot? The Tri-Graph carries **no
+  entity-entity edge**, so a taxonomy (the ICD chapter hierarchy) and a typed relation
+  (*treats*, *contraindicated in*, *revised by*) are exactly what it cannot represent. How
+  far does semantic bridging through sentences substitute for them in practice?
 
 
 ### RQ2. How does LLM-free graph retrieval compare with lexical and dense retrieval, and how does it combine with them?
@@ -140,6 +142,7 @@ Sub-questions:
 - Where does the graph win over dense and over lexical retrieval, and on which metric?
 - Are the graph and lexical signals complementary in a way dense and lexical are not?
 - Is the graph better used in place of an existing signal, or fused on top of it?
+
 
 
 ### RQ3. Which medical retrieval tasks can benefit using a graphRag?
@@ -172,3 +175,46 @@ time (spaCy NER) and linear. Its addition is clustering: entity embeddings are g
 BIRCH into concept nodes, each linked to the entities nearest its centroid, which let the
 activation jump between entities that are related but never co-occur in a sentence.
 It reports outperforming LinearRAG.
+
+
+
+## Use cases: medical and humanitarian
+
+
+
+### Medical
+
+Question shapes where the answer is split across documents:
+
+- **Guideline question answering over a fragmented corpus.** WHO guidelines, national
+  protocols and formularies, where answering needs the combination of two or several chunks. No single chunk contains a direct answer to the question. Examples of multi-hop
+  questions :
+
+  - *"Can the drug used for asthma attacks make the heart race?"* 
+  - *"Can you drink grapefruit juice while on a cholesterol treatment?"* 
+  - *"Is the usual treatment for severe acne safe during pregnancy?"
+  - *"The patient is allergic to [...] — can they be given this antibiotic?"*
+
+- **Aggregative, one-to-many questions.** A second shape, distinct from multi-hop: the
+  corpus is indexed one way (a disease and its description) and the question runs the other
+  way (a sign, and every condition that presents it), so the gold is a **set** of passages
+  rather than one. Flat retrieval ranks by question-passage resemblance and returns the
+  best-worded match; the graph activates the sign as an entity and, through `C`, reaches
+  every passage containing it, ranking highest those that concentrate several activated
+  entities. ICD-11 is the instrumented corpus for this shape
+  (`benchmarks/graph_vs_hybrid/bench_icd11.yaml`). Examples:
+
+  - *"Which diseases present with fever together with a skin rash in a child?"*
+  - *"Which conditions cause progressive, painless loss of vision?"*
+
+- **Auditability** Since graph construction require no LLM, there is no risk of hallucination during the graph construction
+and the construction of the graph from the corpus is deterministic. the index records only where entities are mentioned, and every retrieved passage stays traceable to those mentions. Both matter when the corpus is patient data or when the answer feeds a clinical or operational decision.
+
+
+### Humanitarian
+
+- **Deployment cost, on the indexing side.** The graph is built with NER alone, so a
+  corpus can be indexed on the hardware available on site, with no per-document API call
+  and nothing sent to a provider.
+
+
