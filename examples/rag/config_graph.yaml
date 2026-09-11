@@ -1,0 +1,49 @@
+# Same pipeline as examples/rag/config.yaml, but retrieval goes through the LinearRAG
+# Tri-Graph instead of the dense+sparse hybrid search.
+# Requires `mmore graph-index -c examples/graph_index/config.yaml` to have been run first.
+
+rag:
+  llm:
+    llm_name: OpenMeditron/meditron3-8b
+    max_new_tokens: 1200
+  retriever:
+    type: graph            # "hybrid" (default) or "graph"
+    db:
+      uri: ./proc_demo.db
+      name: 'my_db'
+    collection_name: my_docs
+    hybrid_search_weight: 0.5   # only used by the hybrid fallback (no entity seed found)
+    k: 5
+    use_web: false
+    reranker_model_name: BAAI/bge-reranker-base
+    graph:
+      # Must match the graph-index config.
+      artifacts_dir: ./graph_index
+
+      # --- paper defaults (LinearRAG, arXiv 2510.10114) ---
+      max_iterations: 3          # semantic-bridging hops
+      top_k_sentence: 1          # sentences kept per active entity per hop
+      iteration_threshold: 0.4   # prune propagated entity scores below this
+      passage_ratio: 0.05        # weight of the dense prior in the passage reset vector
+      passage_node_weight: 0.05  # passage vs entity mass in the PPR reset vector
+      damping: 0.5               # personalized PageRank damping
+
+      # --- mmore additions, not in the paper ---
+      seed_min_similarity: 0.5   # floor for linking a query entity to a graph entity;
+                                 # if nothing clears it, retrieval falls back to hybrid
+      dense_candidates: 200      # bounds the dense prior to the top-N Milvus hits
+
+      # Optional: NER model for the query. Defaults to the one recorded in the manifest.
+      # spacy_model: en_core_web_sm
+
+  system_prompt: "Use the following context to answer the questions.\n\nContext:\n{context}"
+
+# NOTE: with graph retrieval, `metadata["similarity"]` is a PPR score rescaled by the top
+# hit (1.0 for the best passage), not a cosine similarity. Judge thresholds such as
+# `min_mean_similarity` are calibrated for cosines and must be retuned before enabling the
+# corrective loop on this config. The raw value is kept as `metadata["graph_score"]`.
+
+mode: local
+mode_args:
+  input_file: examples/rag/queries.jsonl
+  output_file: examples/rag/output_graph.json

@@ -1,0 +1,102 @@
+# PubMedQA again, with medspaCy layered on the same scispaCy NER.
+#
+# Same run_dir as bench_pubmedqa.yaml on purpose: the corpus, the questions and the Milvus
+# collection are reused, only the graph is rebuilt. So this never needs `prepare` or a full
+# `index` — see the README, "Trying another entity extractor".
+#
+#   python -m benchmarks.graph_vs_hybrid index --graph-only -c benchmarks/graph_vs_hybrid/bench_pubmedqa_medspacy.yaml --tag medspacy
+#   python -m benchmarks.graph_vs_hybrid retrieval --strategies graph -c benchmarks/graph_vs_hybrid/bench_pubmedqa_medspacy.yaml --tag medspacy
+#
+# What is being measured: medspaCy contributes no NER of its own. It adds ConText, which
+# marks every entity negated / uncertain / historical / hypothetical / about a family
+# member, and PyRuSH sentence splitting. Two questions follow, and they are separate runs.
+#
+# Measured first on 200 of these abstracts, which is what the two runs are worth knowing:
+#
+#   1. As configured below (drop_asserted empty), medspaCy changes the *entity* set not at
+#      all — same 12,374 mentions, same 6,253-key vocabulary as plain scispaCy, because the
+#      entities are still en_core_sci_md's. All that moves is the sentence split: PyRuSH
+#      produces 2,011 sentence nodes where the parser produced 2,049 (-2%). Sentences are
+#      LinearRAG's bridging unit, so it is not nothing, but this run is the *control*.
+#   2. `--set graph.medspacy.drop_asserted=is_negated` is the run with a hypothesis behind
+#      it: 774 of 16,040 entity mentions (4.8%) sit inside a ConText negation scope, and
+#      dropping them removes 192 keys from the vocabulary. Give it its own graph with
+#      `--set graph.artifacts_name=graph_index_medspacy_neg`.
+#
+# Cost: medspaCy roughly halves extraction throughput, so budget ~28 min of graph-index per
+# run on the 20k-document corpus instead of ~12. Nothing else is rebuilt.
+#
+# Both runs are done; the README's "What the medspaCy runs found" holds the numbers. Short
+# version: PyRuSH changes nothing (p=0.73), dropping negated entities costs hit@1 against
+# the control (p=0.057), because a negated entity is still what a passage is about.
+
+task: pubmedqa
+run_dir: benchmarks/.runs/pubmedqa
+
+pubmedqa:
+  gold_split: pqa_labeled
+  distractor_split: pqa_artificial
+  distractors: 19000
+  questions: 500
+  seed: 13
+  include_mesh: true
+
+index:
+  collection_name: pubmedqa_bench
+  dense_model: sentence-transformers/all-MiniLM-L6-v2
+  sparse_model: splade
+
+graph:
+  # Its own artifacts directory, so the scispaCy graph in ./graph_index survives and the
+  # two can be compared against the *same* Milvus collection.
+  artifacts_name: graph_index_medspacy
+
+  # Unchanged: medspaCy is not a NER model, so this is still what finds the entities.
+  spacy_model: en_core_sci_md
+  ner_backend: medspacy
+
+  medspacy:
+    # PyRuSH replaces the parser for sentence boundaries (spaCy refuses both), ConText
+    # asserts the entities.
+    components: [medspacy_pyrush, medspacy_context]
+    # Empty = annotate, drop nothing. ConText's scope rules were written for clinical
+    # notes and over-extend on academic prose, so this is a setting to sweep, not a
+    # default. See the note above.
+    drop_asserted: []
+    load_rules: true
+    target_rules_path: null
+    quickumls_path: null
+
+  normalize_entities: true
+  batch_size: 128
+  n_process: 1
+
+  # Same query-time parameters as bench_pubmedqa.yaml, so the only difference is the NER.
+  max_iterations: 3
+  top_k_sentence: 1
+  iteration_threshold: 0.4
+  passage_ratio: 0.05
+  passage_node_weight: 0.05
+  damping: 0.5
+  seed_min_similarity: 0.5
+  dense_candidates: 200
+
+retrieval:
+  ks: [1, 3, 5, 10]
+  reranker_model_name: null
+  warmup_queries: 3
+
+answer:
+  k: 5
+  scoring: exact_label
+  labels: ["yes", "no", "maybe"]
+  llm:
+    llm_name: gpt-4o-mini
+    max_new_tokens: 16
+    temperature: 0.0
+  system_prompt: |
+    You are answering a biomedical research question using the retrieved abstracts below.
+    Reply with exactly one word: yes, no, or maybe.
+
+    Context:
+    {context}

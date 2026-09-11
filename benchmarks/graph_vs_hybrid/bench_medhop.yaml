@@ -1,0 +1,69 @@
+# Multi-hop: standard RAG vs LinearRAG graph retrieval, on MedHop.
+#
+# The setting graph retrieval was designed for. Each question is a drug-interaction chain
+# resolvable only by following DrugBank/UniProt accessions across abstracts, and the
+# document holding the answer never names the question's subject — so nothing in the query
+# wording points at it. `hop2_at_k` in the retrieval results is the measurement that
+# matters; everything else is context.
+
+task: medhop
+run_dir: benchmarks/.runs/medhop
+
+medhop:
+  # Questions come from validation (342). Their supports are the reachable gold passages.
+  question_split: validation
+  # Supports of the train split, pooled in as distractors no asked question points at.
+  # Without them, ~22 of 6,000 documents are relevant per question and retrieval is easy.
+  distractor_split: train
+  questions: null
+  seed: 13
+
+index:
+  collection_name: medhop_bench
+  dense_model: sentence-transformers/all-MiniLM-L6-v2
+  sparse_model: splade
+
+graph:
+  # A biomedical model is required: scispaCy tags the DrugBank/UniProt accessions, which
+  # are exactly the nodes the reasoning chain runs through. en_core_web_sm sees none of
+  # them. md, lg and scibert were indistinguishable on PubMedQA; md is the cheapest.
+  spacy_model: en_core_sci_md
+  normalize_entities: true
+  batch_size: 128
+  n_process: 1
+  artifacts_name: graph_index
+
+  # LinearRAG paper defaults. On PubMedQA (single-hop) the best settings were the ones
+  # that suppressed the graph — high passage_ratio, low damping. If multi-hop moves the
+  # optimum back towards these values, that is the result worth reporting.
+  max_iterations: 3
+  top_k_sentence: 1
+  iteration_threshold: 0.4
+  passage_ratio: 0.05
+  passage_node_weight: 0.05
+  damping: 0.5
+  seed_min_similarity: 0.5
+  dense_candidates: 200
+
+retrieval:
+  ks: [1, 3, 5, 10]
+  reranker_model_name: null
+  warmup_queries: 3
+
+answer:
+  k: 10
+  # Nine candidate accessions per question, carried on the question itself, so the answer
+  # is scored by matching. The baseline reported is uniform choice among them (~11%).
+  scoring: exact_label
+  llm:
+    llm_name: gpt-4o-mini
+    max_new_tokens: 16
+    temperature: 0.0
+  system_prompt: |
+    You are answering a drug-interaction question using the retrieved abstracts below.
+    Substances are written as DrugBank identifiers (DB…) and proteins as UniProt
+    accessions. Follow the chain across abstracts. Reply with exactly one identifier from
+    the candidate list, and nothing else.
+
+    Context:
+    {context}

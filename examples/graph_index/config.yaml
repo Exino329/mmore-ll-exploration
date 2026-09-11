@@ -1,0 +1,49 @@
+# Build the LinearRAG Tri-Graph over a collection that `mmore index` already populated.
+#   uv sync --extra graph --extra cpu
+#   python -m spacy download en_core_web_sm
+#   mmore graph-index -c examples/graph_index/config.yaml
+#
+# The passages themselves stay in Milvus: this stage only writes the entity/sentence
+# embeddings, the bipartite maps and the graph to `graph.artifacts_dir`.
+
+indexer:
+  # Must point at the same database `mmore index` wrote to. Both the chunks and the dense
+  # model are read back from the collection itself, so entities, sentences and passages
+  # share one vector space and the graph points at real Milvus primary keys. The model
+  # values below are only a declaration; the collection wins if they disagree.
+  dense_model:
+    model_name: sentence-transformers/all-MiniLM-L6-v2
+    is_multimodal: false
+  sparse_model:
+    model_name: splade
+    is_multimodal: false
+  db:
+    uri: ./proc_demo.db
+    name: my_db
+
+# The collection to build the graph for. It must already exist: `mmore graph-index` reads
+# its chunks from Milvus rather than from a JSONL, because chunk ids are assigned at
+# indexing time and are not carried by the JSONL.
+collection_name: my_docs
+
+graph:
+  # Artifacts land in <artifacts_dir>/<collection_name>/; the retriever config must use
+  # the same directory.
+  artifacts_dir: ./graph_index
+
+  # Entity extraction. `en_core_web_trf` is more accurate but much slower;
+  # `en_core_sci_scibert` (scispaCy) is the biomedical option.
+  spacy_model: en_core_web_sm
+
+  # Merge entity surface forms that differ only by case/whitespace.
+  normalize_entities: true
+  min_entity_length: 2
+  excluded_entity_labels: [ORDINAL, CARDINAL]
+
+  # NER throughput. `n_process > 1` forks spaCy workers; keep it at 1 on small corpora.
+  batch_size: 128
+  n_process: 1
+  max_doc_length: 1000000
+
+  # Ignore the artifacts already on disk and re-embed everything.
+  rebuild: false

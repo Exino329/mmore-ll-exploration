@@ -1,0 +1,80 @@
+# Standard RAG vs LinearRAG graph retrieval, on PubMedQA with distractors.
+#
+#   python -m benchmarks.graph_vs_hybrid prepare    # corpus + questions (downloads from HF)
+#   python -m benchmarks.graph_vs_hybrid index      # times `index` then `graph-index`
+#   python -m benchmarks.graph_vs_hybrid retrieval  # recall@k / MRR, no LLM
+#   python -m benchmarks.graph_vs_hybrid answer     # yes/no/maybe accuracy (needs OPENAI_API_KEY)
+#   python -m benchmarks.graph_vs_hybrid report
+#
+# Everything a run writes lands under run_dir.
+
+task: pubmedqa
+run_dir: benchmarks/.runs/pubmedqa
+
+pubmedqa:
+  # The 1,000 expert-annotated instances. Their abstracts are the gold passages, and their
+  # yes/no/maybe decisions are the gold answers.
+  gold_split: pqa_labeled
+
+  # Abstracts no question points at. Without them retrieval over 1,000 documents is
+  # near-trivial and the two strategies are indistinguishable. Streamed, so only this many
+  # rows are downloaded. `pqa_unlabeled` (61k) is the smaller pool.
+  distractor_split: pqa_artificial
+  distractors: 19000
+
+  questions: 500
+  seed: 13
+
+  # MeSH terms appended to each passage: the closest thing the corpus has to curated
+  # entity annotations, and the graph builder works from text.
+  include_mesh: true
+
+index:
+  collection_name: pubmedqa_bench
+  dense_model: sentence-transformers/all-MiniLM-L6-v2
+  sparse_model: splade
+
+graph:
+  # scispaCy. Measured on 1,300 abstracts: en_core_web_sm extracts no biomedical entities
+  # from these questions, so 75% of graph queries found no seed and silently fell back to
+  # hybrid retrieval; en_core_sci_md brings that to 0%. Check `hybrid_fallback_rate` in the
+  # retrieval results before trusting the graph column. See the README for the install —
+  # it pins spaCy to 3.7.x.
+  spacy_model: en_core_sci_md
+  normalize_entities: true
+  batch_size: 128
+  n_process: 1
+
+  # LinearRAG paper defaults (arXiv 2510.10114), plus mmore's two additions.
+  max_iterations: 3
+  top_k_sentence: 1
+  iteration_threshold: 0.4
+  passage_ratio: 0.05
+  passage_node_weight: 0.05
+  damping: 0.5
+  seed_min_similarity: 0.5
+  dense_candidates: 200
+
+retrieval:
+  ks: [1, 3, 5, 10]
+  # Off by default: the same cross-encoder reordering both strategies' top-k hides the
+  # difference being measured.
+  reranker_model_name: null
+  warmup_queries: 3
+
+answer:
+  k: 5
+  # yes/no/maybe is a closed set, so the answer is scored by matching, not by an LLM judge.
+  scoring: exact_label
+  # Quoted: unquoted yes/no are booleans in YAML 1.1.
+  labels: ["yes", "no", "maybe"]
+  llm:
+    llm_name: gpt-4o-mini
+    max_new_tokens: 16
+    temperature: 0.0
+  system_prompt: |
+    You are answering a biomedical research question using the retrieved abstracts below.
+    Reply with exactly one word: yes, no, or maybe.
+
+    Context:
+    {context}

@@ -1,0 +1,93 @@
+# Standard RAG vs LinearRAG graph retrieval, on ICD-11 — the setup of the earlier
+# GraphRAG-vs-standard-RAG study.
+#
+# The ICD-11 tables are not shipped and are not downloadable as such: see the README.
+# Point icd11.source at your copy before running `prepare`.
+
+task: icd11
+run_dir: benchmarks/.runs/icd11
+
+icd11:
+  source:
+    # `parquet` is the layout of the earlier study: a label->description table and a
+    # label->title table, for diseases and again for the 28 categories. `hf` takes
+    # "dataset_id[:config][:split]" in the same slots; when the text and title specs are
+    # identical the table is read once.
+    kind: parquet
+    diseases_text: /path/to/icd11/diseases_descriptions.parquet
+    diseases_title: /path/to/icd11/diseases_titles.parquet
+    categories_text: /path/to/icd11/categories_descriptions.parquet
+    categories_title: /path/to/icd11/categories_titles.parquet
+    columns:
+      label: label
+      text: text
+      title: title
+
+  # `study` reproduces the earlier preprocessing (numeric label -> that category,
+  # alphabetic -> 13 + alphabet_index). `icd11` uses the real WHO chapter letters, which
+  # the formula only matches for the numeric chapters. The category title is part of the
+  # indexed text, so this changes what is retrieved.
+  category_mapping: study
+
+  # The original run kept the 6,641 entries that carry a description.
+  require_description: true
+  min_description_chars: 80
+  limit: null
+
+  # `vignette`: an LLM rewrites each description as a clinical presentation without naming
+  # the disease. `masked`: blank the title out of its own description — free, but the
+  # question then shares most of its wording with the indexed passage.
+  style: vignette
+  questions: 300
+  seed: 13
+  llm:
+    llm_name: gpt-4o-mini
+    max_new_tokens: 400
+    temperature: 0.0
+  max_workers: 8
+
+index:
+  collection_name: icd11_bench
+  dense_model: sentence-transformers/all-MiniLM-L6-v2
+  sparse_model: splade
+
+graph:
+  spacy_model: en_core_web_sm
+  normalize_entities: true
+  batch_size: 128
+  n_process: 1
+
+  max_iterations: 3
+  top_k_sentence: 1
+  iteration_threshold: 0.4
+  passage_ratio: 0.05
+  passage_node_weight: 0.05
+  damping: 0.5
+  seed_min_similarity: 0.5
+  dense_candidates: 200
+
+retrieval:
+  ks: [1, 3, 5, 10]
+  reranker_model_name: null
+  warmup_queries: 3
+
+answer:
+  k: 5
+  # The answer is an open-ended disease name, so it is scored the way LinearRAG's
+  # src/evaluate.py does: contain accuracy plus an LLM judge.
+  scoring: judge
+  llm:
+    llm_name: gpt-4o-mini
+    max_new_tokens: 256
+    temperature: 0.0
+  judge_llm:
+    llm_name: gpt-4o-mini
+    max_new_tokens: 16
+    temperature: 0.0
+  max_workers: 8
+  system_prompt: |
+    Answer the question using only the context below. Reply with the name of the condition
+    and nothing else. If the context does not contain it, reply 'unknown'.
+
+    Context:
+    {context}

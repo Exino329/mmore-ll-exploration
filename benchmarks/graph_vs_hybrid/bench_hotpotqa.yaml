@@ -1,0 +1,89 @@
+# HotpotQA: standard RAG vs LinearRAG graph retrieval, on the paper's own dataset.
+#
+# The one configuration in this benchmark that is comparable to a published result. Every
+# setting below that could have been chosen freely is instead pinned to LinearRAG's
+# HotpotQA preset (`scripts/run.sh`), so a gap between this run and their table is a
+# property of the port or of mmore, not of the setup.
+#
+# Two measurements matter and they are different questions:
+#   * `hop2_at_k`  — the article reachable only by bridging, on 726 bridge questions.
+#   * `bridge_at_k` vs `comparison_at_k` — the within-run control. Comparison questions
+#     name both entities, so the graph should hold no advantage there. An advantage that
+#     shows up on both is not bridging.
+
+task: hotpotqa
+run_dir: benchmarks/.runs/hotpotqa
+
+hotpotqa:
+  # Their exact 1,000-question subsample (811 bridge / 189 comparison), joined into the
+  # HotpotQA distractor validation split by id — 1000/1000. Their `chunks.json` is *not*
+  # used as the corpus; see the module docstring in hotpotqa.py for why.
+  question_source: linearrag
+  questions: null
+  seed: 13
+  # 0 keeps the 9,811 articles the asked questions' contexts bring, the corpus size the
+  # HotpotQA retrieval literature reports on. Raise it to make the search harder without
+  # changing what is scored.
+  distractor_questions: 0
+  # As HippoRAG and LinearRAG index it. Turn off to measure how much of hop-1 is literal
+  # title matching rather than retrieval.
+  include_title: true
+
+index:
+  collection_name: hotpotqa_bench
+  # LinearRAG's embedding model for every dataset, not this repo's MiniLM default. It is
+  # also the half of the pipeline that decides entity linking quality: 768d on the 1-3
+  # token strings entities actually are, against MiniLM's 384d.
+  dense_model: sentence-transformers/all-mpnet-base-v2
+  sparse_model: splade
+
+graph:
+  # Their HotpotQA preset. General-domain, and the transformer pipeline rather than `sm`:
+  # `en_core_web_sm` is what left 75% of PubMedQA queries with no seed entity. On CPU use
+  # `en_core_web_lg` instead — same pipeline, no GPU, a few points of NER accuracy.
+  # Whichever is picked, read `hybrid_fallback_rate` before reading anything else.
+  spacy_model: en_core_web_trf
+  normalize_entities: true
+  batch_size: 128
+  n_process: 1
+  artifacts_name: graph_index
+
+  # LinearRAG's HotpotQA row of scripts/run.sh, verbatim. These are also the library
+  # defaults, so this block documents the coincidence rather than creating it.
+  max_iterations: 3
+  top_k_sentence: 1
+  iteration_threshold: 0.4
+  passage_ratio: 0.05
+  passage_node_weight: 0.05
+  damping: 0.5
+  seed_min_similarity: 0.5
+  dense_candidates: 200
+
+retrieval:
+  # 2 is the metric HotpotQA is usually reported at — there are exactly two supporting
+  # articles, so `all_at_2` is "both of them, no room to spare".
+  ks: [1, 2, 5, 10]
+  reranker_model_name: null
+  warmup_queries: 3
+
+answer:
+  # Their `retrieval_top_k`.
+  k: 5
+  # Their `contain` accuracy: the gold span appears in the committed answer. Free, and the
+  # column their published table can be checked against.
+  scoring: contain
+  llm:
+    llm_name: gpt-4o-mini
+    max_new_tokens: 256
+    temperature: 0.0
+  # Their QA prompt (src/LinearRAG.py), including the Thought/Answer split the scorer
+  # keys on. Changing it changes what `contain` measures.
+  system_prompt: |
+    As an advanced reading comprehension assistant, your task is to analyze text passages
+    and corresponding questions meticulously. Your response start after "Thought: ", where
+    you will methodically break down the reasoning process, illustrating how you arrive at
+    conclusions. Conclude with "Answer: " to present a concise, definitive response, devoid
+    of additional elaborations.
+
+    Context:
+    {context}
