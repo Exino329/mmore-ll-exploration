@@ -4,7 +4,7 @@
 
 Working title:
 
-> **Graph RAG: LLM-free graph construction for efficient indexing and retrieval**
+> **Extending RAG retrieval for multi-hop answering**
 
 
 ## Context
@@ -114,48 +114,64 @@ happen to be whole sentences whose meaning was never compressed into a predicate
 
 ## Research questions
 
-### RQ1. What are the trade-offs of an LLM-free graph construction against an LLM-constructed one?
+### RQ1. Does graph structure recover the multi-hop evidence flat retrieval misses — as a replacement for the hybrid pipeline, or as an extension of it?
 
+Dense is not a rival system here but a **special case** of the graph scorer: the passage
+prior is `passage_ratio · dense + entity bonus`, so zeroing the bonus and the damping gives
+back the dense ranking. Graph vs dense is therefore a nested ablation, and its delta
+isolates what the structure contributes. The candidate pool gives the matching measurement:
+the dense top-N *plus* every passage incident to an activated entity — the share of returned
+passages coming from outside that pool is what the graph finds and dense does not.
 
 Sub-questions:
 
-- What does an LLM-free construction gain: cost, determinism, no extraction hallucination?
-- How does construction cost scale with corpus size, and what would the same corpus cost
-  with an LLM extractor?
+- Where does the graph win over dense and over lexical retrieval, on which metric, and does
+  the win survive at the *answer* level (LLM-as-judge) or only at recall@k?
+- Are the graph and lexical signals complementary in a way dense and lexical are not?
+- Is the graph better used in place of an existing signal, or fused on top of it? Under
+  fusion, does it ever *degrade* a question flat retrieval already answered?
+
+### RQ2. How far does the extension carry — what is the hop horizon of sentence-level bridging, and can it be pushed?
+
+Semantic bridging propagates activation through sentences, not through relation edges, so
+its reach is bounded by how the activation decays against the acceptance threshold rather
+than by the nominal number of iterations. This RQ characterises that bound and asks whether
+it can be moved without destroying the selectivity of the reset vector.
+
+Sub-questions:
+
+- What is the empirical distribution of query→answer distance in the Tri-Graph, per dataset,
+  and where does activation stop firing?
+- Is the binding constraint depth, NER coverage, or the multiplicative decay against a fixed
+  threshold?
+- Does a decay-aware threshold (per-tier, or normalised by tier depth) recover the second hop
+  without flooding the activated set — and does the passage scorer's tier balance have to
+  change with it, given that hop-1 passages saturate the top-k?
+
+### RQ3. What does the extension cost, and what does an LLM-free construction give up?
+
+Sub-questions:
+
+- What does an LLM-free construction gain: indexing cost, determinism, no extraction
+  hallucination? How does it scale with corpus size against an LLM extractor on the same
+  corpus?
+- What is the query-time cost of the extension, and is it proportionate to the gain?
 - What can an LLM-built graph materialize that NER cannot? The Tri-Graph carries **no
   entity-entity edge**, so a taxonomy (the ICD chapter hierarchy) and a typed relation
   (*treats*, *contraindicated in*, *revised by*) are exactly what it cannot represent. How
   far does semantic bridging through sentences substitute for them in practice?
 
-
-### RQ2. How does LLM-free graph retrieval compare with lexical and dense retrieval, and how does it combine with them?
-
-Dense is not a rival system here but a **special case** of the graph scorer: the passage
-prior is `passage_ratio · dense + entity bonus`, so zeroing the bonus and the damping gives
-back the dense ranking. Graph vs dense is therefore a nested ablation, and its delta
-isolates what the structure contributes. The candidate pool gives the matching measurement,
-being the dense top-N *plus* every passage incident to an activated entity: the share of
-returned passages coming from outside that pool is what the graph finds and dense does not.
-
-Sub-questions:
-
-- Where does the graph win over dense and over lexical retrieval, and on which metric?
-- Are the graph and lexical signals complementary in a way dense and lexical are not?
-- Is the graph better used in place of an existing signal, or fused on top of it?
-
-
-
-### RQ3. Which medical retrieval tasks can benefit using a graphRag?
-
+### RQ4. Which medical and humanitarian question shapes benefit from the extension?
 
 There are spaCy models capable of processing biomedical/clinical text:
 https://allenai.github.io/scispacy/
 
 Sub-questions:
 
-- Which medical question shapes separate the graph from flat retrieval?
-- How can we interpret graph's retrieval results in a medical context ?
-
+- Which question shapes separate the graph from flat retrieval: multi-hop chains, or
+  aggregative one-to-many questions whose gold is a *set* of passages?
+- Does domain NER (scispaCy) change the answer to RQ1 on a biomedical corpus?
+- How can the graph's retrieval result be interpreted — and audited — in a medical context?
 
 
 
