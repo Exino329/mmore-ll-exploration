@@ -1,4 +1,5 @@
 """PDF fast-mode extraction using pymupdf4llm, opt-in through `processor_selection`.
+Reference : https://pymupdf.readthedocs.io/en/latest/pymupdf4llm/api.html
 
 Select it per extension in the dispatcher config:
 
@@ -6,8 +7,12 @@ Select it per extension in the dispatcher config:
       use_fast_processors: true
       processor_selection:
         ".pdf": PDFPyMuPDF4LLMProcessor
+      processor_config:
+        PDFPyMuPDF4LLMProcessor:
+          - image_dpi: 300  # optional, resolution figures are rendered at
 """
 
+import base64
 import io
 import logging
 import re
@@ -22,8 +27,10 @@ from ..utils import clean_image, clean_text
 from . import pdf_processor
 from .pdf_processor import PDFMetadata
 
-# pymupdf4llm writes Markdown image links; they are stripped and replaced by attachment tags.
+# pymupdf4llm writes images as markdown links, they need to be replaced by attachment tags.
 MD_IMG_REGEX = re.compile(r"!\[]\(([^)]*)\)")
+
+DEFAULT_IMAGE_DPI = 300
 
 
 class PDFPyMuPDF4LLMProcessor(pdf_processor.PDFProcessor):
@@ -38,62 +45,45 @@ class PDFPyMuPDF4LLMProcessor(pdf_processor.PDFProcessor):
             Tuple[int, int, int]
         ] = []  # (char_offset, page_num, para_index)
 
-        def _extract_image(
-            pdf_doc: pymupdf.Document, xref: int
-        ) -> Optional[Image.Image]:
-            """Extract an embedded image XObject at its native resolution as RGB."""
+        def _decode_image(link: str) -> Optional[Image.Image]:
+            """Decode a base64 data image."""
             try:
-                base_image = pdf_doc.extract_image(xref)
-                image_bytes = base_image.get("image")
+                data = link.split(",", 1)[1]
+                return Image.open(io.BytesIO(base64.b64decode(data))).convert("RGB")
 
-                if image_bytes is None:
-                    logging.error(f"No image data found for xref {xref}")
-
-                return Image.open(io.BytesIO(cast(bytes, image_bytes))).convert("RGB")
-
-            except KeyError as e:
-                logging.error(f"KeyError while extracting image: {e}")
-                return None
-
-            except UnidentifiedImageError as e:
-                logging.error(
-                    f"UnidentifiedImageError: Could not identify image file for xref {xref}: {e}"
-                )
-                return None
-
-            except Exception as e:
-                logging.error(
-                    f"Unexpected error while extracting image for xref {xref}: {e}"
-                )
+            except (IndexError, ValueError, UnidentifiedImageError) as e:
+                logging.error(f"Could not decode embedded image: {e}")
                 return None
 
         current_position = 0
 
-        md_pages = pymupdf4llm.to_markdown(
-            pdf_doc,
-            page_chunks=True,
-            write_images=False,
+        md_pages = cast(
+            List[dict],
+            pymupdf4llm.to_markdown(
+                pdf_doc,
+                page_chunks=True,
+                # encode images as base64 encoded string in markdown
+                embed_images=self.config.extract_images,
+                dpi=self.config.custom_config.get("image_dpi", DEFAULT_IMAGE_DPI),
+            ),
         )
 
         for page_num, page in enumerate(md_pages):
             text = cast(str, page["text"])
-            text = MD_IMG_REGEX.sub("", text)
+
+            # replace markdown encoded images by attachment tag
+            for link in MD_IMG_REGEX.findall(text):
+                tag = ""
+                if self.config.extract_images:
+                    image = _decode_image(link)
+                    if image is not None and clean_image(image):
+                        embedded_images.append(image)
+                        tag = self.config.attachment_tag
+                text = text.replace(f"![]({link})", tag, 1)
 
             # keep_two_line_breaks preserves the blank lines that separate
             # Markdown blocks, which the paragraph_starts split relies on.
             text = clean_text(text, keep_two_line_breaks=True)
-
-            if self.config.extract_images:
-                for img_info in pdf_doc[page_num].get_images(full=True):
-                    image = _extract_image(pdf_doc, img_info[0])
-
-                    if image is not None and clean_image(image):
-                        embedded_images.append(image)
-                        text = (
-                            f"{text}\n\n{self.config.attachment_tag}"
-                            if text.strip()
-                            else self.config.attachment_tag
-                        )
 
             if not text.strip():
                 continue
