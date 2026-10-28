@@ -147,9 +147,10 @@ class JobQueue:
                         and self._free_device_slots[device] == self.jobs_per_gpu
                     ):
                         borrowed.append(device)
-                borrowed = borrowed[:limit]
+                        if len(borrowed) == limit:
+                            break
                 for device in borrowed:
-                    self._free_device_slots[device] = 0
+                    self._free_device_slots[device] -= self.jobs_per_gpu
         if borrowed:
             logger.info("[JobQueue] lent idle devices %s", borrowed)
         try:
@@ -163,12 +164,13 @@ class JobQueue:
 
     def _acquire_device(self) -> str:
         with self._slots_changed:
-            while True:
-                device = max(self.devices, key=lambda d: self._free_device_slots[d])
-                if self._free_device_slots[device] > 0:
-                    self._free_device_slots[device] -= 1
-                    return device
-                self._slots_changed.wait()
+            # Sleeps without holding the lock until a release notifies
+            self._slots_changed.wait_for(
+                lambda: any(self._free_device_slots[d] > 0 for d in self.devices)
+            )
+            device = max(self.devices, key=lambda d: self._free_device_slots[d])
+            self._free_device_slots[device] -= 1
+            return device
 
     def _release_device(self, device: str) -> None:
         with self._slots_changed:

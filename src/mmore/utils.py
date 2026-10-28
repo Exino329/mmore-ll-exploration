@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Dict, List, Optional, Type, TypeVar, Union, cast
 
@@ -7,6 +8,8 @@ import yaml
 from dacite import Config, from_dict
 
 if TYPE_CHECKING:
+    from concurrent.futures import Executor
+
     from .index.indexer import Indexer
     from .rag.retriever import Retriever, RetrieverConfig
     from .type import MultimodalSample
@@ -223,7 +226,6 @@ def process_files_default(
 ) -> List["MultimodalSample"]:
     from .process.crawler import Crawler, CrawlerConfig
     from .process.dispatcher import Dispatcher, DispatcherConfig
-    from .process.post_processor.pipeline import PPPipeline, PPPipelineConfig
 
     # Per-job output_path keeps concurrent jobs from overwriting each
     # other if enforced by the caller
@@ -250,13 +252,39 @@ def process_files_default(
     dispatcher = Dispatcher(result=crawl_result, config=dispatcher_config)
     raw_documents = sum(list(dispatcher()), [])
 
-    # post-processing (chunking)
+    return chunk_documents(raw_documents, output_path)
+
+
+def process_pdf_split_default(
+    file_path: str,
+    pools: Dict[str, "Executor"],
+    devices: List[str],
+    page_count: int,
+    output_path: str,
+) -> List["MultimodalSample"]:
+    """Like process_files_default for one PDF, with its pages split across devices."""
+    from .process.processors.base import ProcessorConfig
+    from .process.processors.pdf_processor import PDFProcessor
+
+    processor = PDFProcessor(
+        ProcessorConfig(extract_images=True, custom_config={"output_path": output_path})
+    )
+    document = processor.process_split(file_path, pools, devices, page_count)
+    document.metadata.processed_at = datetime.now().isoformat()
+    document.metadata.processor_type = PDFProcessor.__name__
+
+    return chunk_documents([document], output_path)
+
+
+def chunk_documents(
+    documents: List["MultimodalSample"], output_path: str
+) -> List["MultimodalSample"]:
+    from .process.post_processor.pipeline import PPPipeline, PPPipelineConfig
+
     default_config = {
         "pp_modules": [{"type": "chunker"}],
         "output": {"output_path": output_path},
     }
     config: PPPipelineConfig = load_config(default_config, PPPipelineConfig)
     pipeline = PPPipeline.from_config(config)
-    chunked = pipeline(raw_documents)
-
-    return chunked
+    return pipeline(documents)

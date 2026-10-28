@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import threading
+from concurrent.futures import Executor, wait
 from dataclasses import dataclass, field
 from multiprocessing import Manager, Process, set_start_method
 from typing import Any, Dict, List, Optional, Tuple, cast
@@ -15,12 +16,7 @@ from marker.models import create_model_dict
 from marker.output import text_from_rendered
 from PIL import Image, UnidentifiedImageError
 
-from ...type import (
-    DocumentMetadata,
-    FileDescriptor,
-    MultimodalRawInput,
-    MultimodalSample,
-)
+from ...type import DocumentMetadata, FileDescriptor, MultimodalSample
 from ...ux import is_verbose, loading_model, progress
 from ..utils import clean_image, clean_text
 from .base import Processor, ProcessorConfig
@@ -135,9 +131,7 @@ class PDFProcessor(Processor):
             if num_gpus == 1 or len(files_paths) < 10:
                 if self.converter is None:
                     self.converter = PDFProcessor.load_models(
-                        disable_image_extraction=not self.config.custom_config.get(
-                            "extract_images", True
-                        )
+                        disable_image_extraction=not self.config.extract_images
                     )
 
                 results = []
@@ -203,53 +197,108 @@ class PDFProcessor(Processor):
     _PAGE_SEP_RE = re.compile(r"\n\n\{(\d+)\}-{3,}\n\n")
 
     def process(self, file_path: str) -> MultimodalSample:
-        rendered = self._render(file_path)
-        return self._build_sample(file_path, rendered.text, rendered.modalities)
+        if self.converter is None:
+            self.converter = PDFProcessor.load_models(
+                disable_image_extraction=not self.config.extract_images
+            )
+
+        text, images = self._render(self.converter, file_path)
+        return self._build_sample(file_path, text, images)
 
     def process_page_range(
         self, file_path: str, page_range: List[int]
-    ) -> MultimodalSample:
-        """Render only some pages of a PDF as one shard to merge later."""
-        self.converter = PDFProcessor.load_models(
+    ) -> Tuple[str, List[Image.Image]]:
+        """Render only some pages of a PDF, as raw text and images to merge later.
+
+        The page range is part of the marker config, so this needs its own
+        converter. The models behind it stay cached per device.
+        """
+        converter = PDFProcessor.load_models(
             disable_image_extraction=not self.config.extract_images,
             device=self.config.custom_config.get("device"),
             page_range=page_range,
         )
-        return self._render(file_path)
+        return self._render(converter, file_path)
 
-    def _render(self, file_path: str) -> MultimodalSample:
-        if self.converter is None:
-            self.converter = PDFProcessor.load_models(
-                disable_image_extraction=not self.config.custom_config.get(
-                    "extract_images", True
-                )
-            )
-
-        rendered = self.converter(file_path)
-        text, _, images = text_from_rendered(rendered)
-        text = re.sub(str(IMG_REGEX), "<attachment>", cast(str, text))
-        return self.create_sample([text], list(images.values()))
-
-    @classmethod
     def merge_page_shards(
-        cls, file_path: str, shards: List[MultimodalSample]
+        self, file_path: str, shards: List[Tuple[str, List[Image.Image]]]
     ) -> MultimodalSample:
         """Join rendered shards, given in page order, into one document sample."""
-        text = "".join(shard.text for shard in shards)
-        modalities = [m for shard in shards for m in shard.modalities]
-        return cls._build_sample(file_path, text, modalities)
+        text = "".join(shard_text for shard_text, _ in shards)
+        images = [image for _, shard_images in shards for image in shard_images]
+        return self._build_sample(file_path, text, images)
 
-    @classmethod
-    def _build_sample(
-        cls, file_path: str, text: str, modalities: List[MultimodalRawInput]
+    def process_split(
+        self,
+        file_path: str,
+        pools: Dict[str, Executor],
+        devices: List[str],
+        page_count: int,
     ) -> MultimodalSample:
-        paragraph_starts, text = cls._parse_pagination(text)
+        """Render one PDF on several devices at once, one page range per device.
+
+        Each shard runs in its device's pool, then the shards are merged here,
+        so the images are saved once under this processor's output_path.
+        """
+        ranges = self.split_page_ranges(page_count, len(devices))
+        futures = [
+            pools[device].submit(
+                PDFProcessor(
+                    ProcessorConfig(
+                        extract_images=self.config.extract_images,
+                        custom_config={"device": device},
+                    )
+                ).process_page_range,
+                file_path,
+                page_range,
+            )
+            for device, page_range in zip(devices, ranges)
+        ]
+        wait(futures)
+        return self.merge_page_shards(file_path, [f.result() for f in futures])
+
+    @staticmethod
+    def page_count(file_path: str) -> int:
+        """Page count of a PDF, or 0 if it is not a readable PDF."""
+        if not file_path.lower().endswith(".pdf"):
+            return 0
+        try:
+            with pymupdf.open(file_path) as pdf:
+                return len(pdf)
+        except Exception as e:
+            # Leave unreadable files to the regular path and its errors
+            logging.warning("Could not count pages of %s: %s", file_path, e)
+            return 0
+
+    @staticmethod
+    def split_page_ranges(page_count: int, n_parts: int) -> List[List[int]]:
+        """Cut pages [0..page_count-1] into n_parts contiguous shards."""
+        n_parts = max(1, min(n_parts, page_count))
+        base, extra = divmod(page_count, n_parts)
+        ranges, start = [], 0
+        for i in range(n_parts):
+            end = start + base + (1 if i < extra else 0)
+            ranges.append(list(range(start, end)))
+            start = end
+        return ranges
+
+    @staticmethod
+    def _render(converter, file_path: str) -> Tuple[str, List[Image.Image]]:
+        rendered = converter(file_path)
+        text, _, images = text_from_rendered(rendered)
+        text = re.sub(str(IMG_REGEX), "<attachment>", cast(str, text))
+        return text, list(images.values())
+
+    def _build_sample(
+        self, file_path: str, text: str, images: List[Image.Image]
+    ) -> MultimodalSample:
+        paragraph_starts, text = self._parse_pagination(text)
 
         metadata = PDFMetadata(file_path=file_path)
         if paragraph_starts:
             metadata.paragraph_starts = paragraph_starts
 
-        return MultimodalSample(text, modalities, metadata)
+        return self.create_sample([text], images, metadata)
 
     @classmethod
     def _parse_pagination(
